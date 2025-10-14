@@ -1,0 +1,42 @@
+// file: example_structs.h
+
+#ifndef EXAMPLE_STRUCTS_H
+#define EXAMPLE_STRUCTS_H
+
+#define NICKSIZE 32
+
+struct person {
+    char *name;                 // dynamic string
+    int age;                    // normal integer
+
+    // C++ comment
+
+    const int id;               // read-only integer
+
+    uint32_t ssn;
+
+    /* C-comment */
+
+    char nickname[NICKSIZE];          // fixed-size array w/o explicit number for the size
+    bool skip_this_member;
+
+
+    /* Another C-comment */
+
+    const char country[16];     /* read-only fixed-size array with explicit number for the size */
+
+
+    // Another C++ comment
+};
+
+
+struct car {
+    char *vin;                  // dynamic string
+    int year;
+    const char *make;           // read-only string
+    char model[64];             // fixed-size array
+};
+
+
+#endif /* EXAMPLE_STRUCTS_H */
+
