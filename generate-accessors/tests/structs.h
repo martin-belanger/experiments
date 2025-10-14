@@ -35,6 +35,10 @@ struct car {
     int year;
     const char *make;           // read-only string
     char model[64];             // fixed-size array
+
+    struct person owner;
+
+    int *price;
 };
 
 
