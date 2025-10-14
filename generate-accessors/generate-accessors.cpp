@@ -14,6 +14,7 @@
 #include <set>
 #include <filesystem>
 #include <getopt.h>
+#include <glob.h>   // For wildcard expansion
 
 namespace fs = std::filesystem;
 
@@ -28,7 +29,7 @@ struct Field {
 using StructFields = std::vector<Field>;
 using StructMap    = std::map<std::string, StructFields>;
 using StringSet    = std::set<std::string>;
-using Excluded     = std::vector<std::string>;
+using StringList   = std::vector<std::string>;
 
 static std::string trim(const std::string &s) {
 	size_t start = s.find_first_not_of(" \t\r\n");
@@ -72,8 +73,10 @@ static StructMap parse_structs(const std::string &text,
 		StructFields        fields;
 		std::istringstream  lines;
 
+		searchStart = match.suffix().first;
+
 		structName = match[1];
-		if (!incl_list.empty() && !incl_list.count(structName))
+		if (!incl_list.empty() && incl_list.count(structName) == 0)
 			continue;
 
 		body = match[2];
@@ -123,9 +126,9 @@ static StructMap parse_structs(const std::string &text,
 
 		if (!fields.empty()) {
 			structs[structName] = fields;
-			if (verbose) std::cout << "Found struct: " << structName << " (" << fields.size() << " fields)\n";
+			if (verbose)
+				std::cout << "Found struct: " << structName << " (" << fields.size() << " fields)\n";
 		}
-		searchStart = match.suffix().first;
 	}
 
 	return structs;
@@ -133,10 +136,10 @@ static StructMap parse_structs(const std::string &text,
 
 static std::string generate_hdr(const std::string  &structName,
 				const StructFields &fields,
-				const std::string  &headerFile,
+				const std::string  &hdr_file,
 				const StringSet    &excl_list,
 				const std::string  &prefix,
-				Excluded           &excluded,
+				StringSet          &excluded,
 				bool               combine=false) {
 	std::ostringstream out;
 	std::string guard;
@@ -152,7 +155,7 @@ static std::string generate_hdr(const std::string  &structName,
 		out << "/* Auto-generated setter/getter code */\n";
 		out << "#ifndef " << guard << "\n"
 		       "#define " << guard << "\n\n";
-		out << "#include \"" << headerFile << "\"\n"
+		out << "#include \"" << hdr_file << "\"\n"
 		       "#include <stdlib.h>\n"
 		       "#include <string.h>\n\n";
 	}
@@ -161,9 +164,16 @@ static std::string generate_hdr(const std::string  &structName,
 		std::string fname;
 		std::string key;
 
+		// Check if struct is to be excluded
+		if (excl_list.count(structName) != 0) {
+			excluded.insert(structName);
+			continue;
+		}
+
+		// Check if struct::member is to be excluded
 		key = structName + "::" + f.name;
-		if (excl_list.count(key)) {
-			excluded.push_back(key);
+		if (excl_list.count(key) != 0) {
+			excluded.insert(key);
 			continue;
 		}
 
@@ -189,7 +199,7 @@ static std::string generate_hdr(const std::string  &structName,
 
 static std::string generate_src(const std::string  &structName,
 				const StructFields &fields,
-				const StringSet &excl_list,
+				const StringSet    &excl_list,
 				const std::string  &prefix,
 				bool               combine=false) {
 	std::ostringstream out;
@@ -208,8 +218,14 @@ static std::string generate_src(const std::string  &structName,
 		std::string fname;
 		std::string key;
 
+		// Check if struct is to be excluded
+		if (excl_list.count(structName) != 0)
+			continue;
+
+		// Check if struct::member is to be excluded
 		key = structName + "::" + f.name;
-		if (excl_list.count(key)) continue;
+		if (excl_list.count(key) != 0)
+			continue;
 
 		fname = prefix + structName + "_" + f.name;
 
@@ -266,13 +282,17 @@ int main(int argc, char *argv[]) {
 	std::string        exclFile;
 	std::string        inclFile;
 	std::string        prefix;
-	std::string        headerFile;
 	fs::path           outdir = ".";
+	StringList         hdr_files;
 	StringSet          incl_list;
 	StringSet          excl_list;
-	Excluded           excluded;
+	StringSet          excluded;
 	std::ifstream      in;
 	std::stringstream  buffer;
+	std::ostringstream headerIntro;
+	std::ostringstream headerBody;
+	std::ostringstream sourceIntro;
+	std::ostringstream sourceBody;
 
 	static struct option long_options[] = {
 		{ "outdir",  required_argument, 0, 'o' },
@@ -298,74 +318,98 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-	if (optind < argc) {
-		headerFile = argv[optind];
-	}
-
-	if (headerFile.empty()) {
-		std::cout << "Please specify header file(s) to parse" << std::endl;
-		print_usage(argv[0]);
+	// Remaining arguments after options are file names or wildcards
+        if (optind >= argc) {
+		std::cerr << "Please specify header file(s) to parse" << std::endl;
 		return 1;
+        }
+
+	for (int i = optind; i < argc; ++i) {
+		glob_t glob_result{};
+		int ret = glob(argv[i], GLOB_TILDE, nullptr, &glob_result);
+		if (ret == 0) {
+			for (size_t j = 0; j < glob_result.gl_pathc; ++j)
+				hdr_files.emplace_back(glob_result.gl_pathv[j]);
+		} else {
+			std::cerr << "Warning: No match for " << argv[i] << "\n";
+		}
+		globfree(&glob_result);
 	}
 
 	fs::create_directories(outdir);
 	incl_list = load_list(inclFile);
 	excl_list = load_list(exclFile);
 
-	in = std::ifstream(headerFile);
-	if (!in) {
-		std::cerr << "Cannot open header file\n";
-		return 1;
-	}
-
-	buffer << in.rdbuf();
-	auto structs = parse_structs(buffer.str(), incl_list, verbose);
-	if (structs.empty()) {
-		if (verbose)
-			std::cout << "No structs found.\n";
-		return 0; 
-	}
-
 	if (combine) {
-		std::ostringstream headerAll, sourceAll;
-		headerAll << "/* Auto-generated setter/getter code */\n"
+		headerIntro << "/* Auto-generated setter/getter code */\n"
 			     "#ifndef ACCESSORS_H\n"
 			     "#define ACCESSORS_H\n"
 			     "\n"
-			     "#include \"" << fs::path(headerFile).filename().string() << "\"\n"
 			     "#include <stdlib.h>\n"
 			     "#include <string.h>\n"
 			     "\n";
-		sourceAll << "/* Auto-generated combined accessors */\n"
+		sourceIntro << "/* Auto-generated combined accessors */\n"
 			     "#include <stdlib.h>\n"
 			     "#include <string.h>\n"
-			     "#include \"" << fs::path(headerFile).filename().string() << "\"\n"
 			     "#include \"accessors.h\"\n"
 			     "\n";
+	}
 
-		for (const auto &[sname, fields]: structs) {
-			headerAll << generate_hdr(sname, fields, fs::path(headerFile).filename().string(), excl_list, prefix, excluded, combine) << "\n";
-			sourceAll << generate_src(sname, fields, excl_list, prefix, combine) << "\n";
+	for (const auto &hdr_file : hdr_files) {
+		if (verbose)
+			std::cout << "\nProcessing " << hdr_file << '\n';
+
+		in = std::ifstream(hdr_file);
+		if (!in) {
+			std::cerr << "Cannot open file " << hdr_file << '\n';
+			continue;
 		}
 
-		headerAll << "#endif /* ACCESSORS_H */\n";
+		buffer.str(""); // Clear the buffer content
+		buffer.clear(); // Clear any error flag
+		buffer << in.rdbuf();
+		auto structs = parse_structs(buffer.str(), incl_list, verbose);
+		if (structs.empty()) {
+			if (verbose) {
+				if (incl_list.empty())
+					std::cout << "No structs found in " << hdr_file << ".\n";
+				else
+					std::cout << "No structs found in " << hdr_file << " that are part of the include list.\n";
+			}
+			continue;
+		}
 
-		write_file(outdir / "accessors.h", headerAll.str());
-		write_file(outdir / "accessors.c", sourceAll.str());
-		std::cout << "Generated combined accessors.h and accessors.c\n";
-	} else {
-		for (const auto &[sname, fields]: structs) {
-			write_file(outdir / (sname + "_accessors.h"), generate_hdr(sname, fields, fs::path(headerFile).filename().string(), excl_list, prefix, excluded, combine));
-			write_file(outdir / (sname + "_accessors.c"), generate_src(sname, fields, excl_list, prefix, combine));
-			std::cout << "Generated " << sname << "_accessors.h/.c\n";
+		excluded.clear();
+		if (combine) {
+			headerIntro << "#include \"" << fs::path(hdr_file).filename().string() << "\"\n";
+			sourceIntro << "#include \"" << fs::path(hdr_file).filename().string() << "\"\n";
+			excluded.clear();
+			for (const auto &[sname, fields]: structs) {
+				headerBody << generate_hdr(sname, fields, fs::path(hdr_file).filename().string(), excl_list, prefix, excluded, combine) << "\n";
+				sourceBody << generate_src(sname, fields, excl_list, prefix, combine) << "\n";
+			}
+		} else {
+			for (const auto &[sname, fields]: structs) {
+				write_file(outdir / (sname + "_accessors.h"), generate_hdr(sname, fields, fs::path(hdr_file).filename().string(), excl_list, prefix, excluded, combine));
+				write_file(outdir / (sname + "_accessors.c"), generate_src(sname, fields, excl_list, prefix, combine));
+				std::cout << "Generated " << sname << "_accessors.h/.c\n";
+			}
+		}
+		if (verbose && !excluded.empty()) {
+			std::cout << "Excluded member(s):\n";
+			for (auto excl_item: excluded) {
+				std::cout << "   " << excl_item << "\n";
+			}
 		}
 	}
 
-	if (verbose && !excluded.empty()) {
-		std::cout << "Excluded members:\n";
-		for (auto excl_item: excluded) {
-			std::cout << "   " << excl_item << "\n";
-		}
+	if (combine) {
+		headerBody << "#endif /* ACCESSORS_H */\n";
+		headerIntro << "\n";
+		sourceIntro << "\n";
+		write_file(outdir / "accessors.h", headerIntro.str() + headerBody.str());
+		write_file(outdir / "accessors.c", sourceIntro.str() + sourceBody.str());
+		std::cout << "\nGenerated combined accessors.h and accessors.c\n";
 	}
 
 	return 0;
