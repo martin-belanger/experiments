@@ -26,7 +26,7 @@ make test
 | ----- | ----------- | -------- | ------------------------------------------------------------ |
 | `-o`  | `--outdir`  | `<dir>`  | Output directory (default is current directory)              |
 | `-c`  | `--combine` | none     | Generate a single combined `accessors.c` and `accessors.h` file. Default is to generate separate files (`<struct>_accessors.[ch]`) for each `struct` processed. |
-| `-e`  | `--excl`    | `<file>` | Exclusion list file with `struct:member` per line            |
+| `-e`  | `--excl`    | `<file>` | Exclusion list file with `struct::member` per line           |
 | `-i`  | `--incl`    | `<file>` | Inclusion list file with `struct` per line. The list of `struct` to be included in the generation. When not specified, accessors will be generated for all `struct` found in the `header-file`. |
 | `-p`  | `--prefix`  | `<str>`  | Prefix for generated function names                          |
 | `-v`  | `--verbose` | none     | Verbose output showing which `struct` is being processed     |
