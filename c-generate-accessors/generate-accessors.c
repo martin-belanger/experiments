@@ -266,8 +266,7 @@ mkdir_out:
  */
 static const char *get_filename(const char *path) {
 	const char *slash = strrchr(path, '/');
-	if (slash) return slash + 1;  /* Return everything after the last '/' */
-	else return path;             /* No '/' found — path is already a filename */
+	return slash ? slash + 1 : path;
 }
 
 /**
@@ -352,8 +351,8 @@ static void remove_c_comments(char *text) {
  * @return Size in bytes of the match, or 0 if invalid.
  */
 static size_t match_size(const regmatch_t *m) {
-	if (m->rm_so < 0 || m->rm_eo < 0 || m->rm_eo < m->rm_so) return 0;
-	return m->rm_eo - m->rm_so;
+	bool invalid = m->rm_so < 0 || m->rm_eo < 0 || m->rm_eo < m->rm_so;
+	return invalid ? 0 : m->rm_eo - m->rm_so;
 }
 
 /**
@@ -467,8 +466,8 @@ static void strlst_init(StringList_t *list, size_t initial_capacity) {
  */
 static void strlst_add(StringList_t *list, const char *new_string) {
 	if (list->count == list->capacity) {
-		/* Reallocate to increase capacity */
-		list->capacity *= 2; /* Double the capacity */
+		/* Reallocate to double capacity */
+		list->capacity *= 2;
 		list->strings = (char **)realloc(list->strings, list->capacity * sizeof(char *));
 		for (size_t i = list->count; i < list->capacity; i++) {
 			list->strings[i] = NULL;
@@ -609,8 +608,7 @@ static bool is_excluded(const StringList_t *excl_list, const char *struct_name, 
 			return true; /* exclude entire struct */
 	}
 
-	if (!member_name)
-		return false;
+	if (!member_name) return false;
 
 	/* Second, check if StructName::member is excluded */
 	snprintf(key, sizeof(key), "%s::%s", struct_name, member_name);
@@ -1076,7 +1074,7 @@ static void generate_hdr(FILE  *generated_hdr, StructInfo_t  *si, Conf_t *conf) 
 		}
 
 		/* Getter method */
-		fprintf(generated_hdr, "%s %s%s_%s_get(struct %s *p);\n",
+		fprintf(generated_hdr, "%s %s%s_%s_get(struct %s *p);\n\n",
 			members->type, conf->args.prefix, si->name, members->name, si->name);
 	}
 }
@@ -1344,7 +1342,7 @@ int main(int argc, char *argv[]) {
 		free(fname);
 
 		fprintf(generated_hdr,
-			"/* Auto-generated setter/getter code */\n"
+			"/* Auto-generated struct member accessors (setter/getter) */\n"
 			"#ifndef ACCESSORS_H\n"
 			"#define ACCESSORS_H\n"
 			"\n"
@@ -1352,7 +1350,7 @@ int main(int argc, char *argv[]) {
 			"#include <string.h>\n"
 			"\n");
 		fprintf(generated_src,
-			"/* Auto-generated combined accessors */\n"
+			"/* Auto-generated struct member accessors (setter/getter) */\n"
 			"#include <stdlib.h>\n"
 			"#include <string.h>\n"
 			"#include \"accessors.h\"\n"
@@ -1371,8 +1369,11 @@ int main(int argc, char *argv[]) {
 
 		if (STRUCT_LIST_EMPTY(&sl)) {
 			if (conf.args.verbose) {
-				if (STRLST_EMPTY(&conf.incl_list)) printf("No structs found in %s.\n", in_hdr);
-				else printf("No structs found in %s that are part of the include list.\n", in_hdr);
+				if (STRLST_EMPTY(&conf.incl_list)) {
+					printf("No structs found in %s.\n", in_hdr);
+				} else {
+					printf("No structs found in %s that are part of the include list.\n", in_hdr);
+				}
 			}
 			continue;
 		}
@@ -1416,13 +1417,13 @@ int main(int argc, char *argv[]) {
 
 				/* Generate code for the header file (*.h) */
 				fprintf(generated_hdr,
-					"/* Auto-generated setter/getter code */\n"
+					"/* Auto-generated member accessors (setter/getter) for struct %s */\n"
 					"#ifndef ACCESSORS_%s_H\n"
 					"#define ACCESSORS_%s_H\n\n"
 					"#include \"%s\"\n"
 					"#include <stdlib.h>\n"
 					"#include <string.h>\n\n",
-					sname_upper, sname_upper, in_hdr_fname);
+					si->name, sname_upper, sname_upper, in_hdr_fname);
 
 				generate_hdr(generated_hdr, si, &conf);
 
@@ -1431,10 +1432,10 @@ int main(int argc, char *argv[]) {
 
 				/* Generate code for the source file (*.c) */
 				fprintf(generated_src,
-					"/* Auto-generated setter/getter code */\n"
+					"/* Auto-generated member accessors (setter/getter) for struct %s */\n"
 					"#include <stdlib.h>\n"
 					"#include <string.h>\n"
-					"#include \"%s_accessors.h\"\n\n", si->name);
+					"#include \"%s_accessors.h\"\n\n", si->name, si->name);
 				generate_src(generated_src, si, &conf);
 
 				fclose(generated_hdr);
