@@ -1009,7 +1009,10 @@ static void struct_list_parse(StructList_t *sl, const char *text, Conf_t *conf) 
 					bool is_char = match_startswith(trimmed_line, &member_match[2], "char");
 
 					/* If we have a pointer, but it's not a "char *" then skip. */
-					if (!is_char) continue;
+					if (!is_char) {
+						free(name);
+						continue;
+					}
 
 					type = safe_strdup("const char *"); /* used as the getter return type */
 				} else {
