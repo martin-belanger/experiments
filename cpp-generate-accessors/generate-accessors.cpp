@@ -1,8 +1,13 @@
 /**
+ * Copyright (c) 2025 Martin Belanger.
+ *
  * g++ -std=c++17 -O2 generate_accessors.cpp -o generate_accessors
  *
- * ./generate_accessors --outdir gen --verbose example_structs.h
+ * Example usage:
+ *   ./generate_accessors --outdir gen --verbose myfile.h
  *
+ * This program parses C header files and generates accessor
+ * functions (setter/getter) for each member found within.
  */
 #include <iostream>
 #include <fstream>

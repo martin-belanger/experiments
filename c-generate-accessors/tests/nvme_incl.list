@@ -1,0 +1,7 @@
+# Struct to be included from libnvme header files
+nvme_path
+nvme_ns
+nvme_ctrl
+nvme_subsystem
+nvme_host
+nvme_fabric_options

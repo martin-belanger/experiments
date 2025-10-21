@@ -3,6 +3,8 @@
 #ifndef EXAMPLE_STRUCTS_H
 #define EXAMPLE_STRUCTS_H
 
+#include <stdint.h>
+
 #define NICKSIZE 32
 
 struct person {
@@ -41,6 +43,11 @@ struct car {
     int *price;
 };
 
+typedef struct car2 {
+	int year;
+	const char *make;           // read-only string
+
+} car2_t ;
 
 #endif /* EXAMPLE_STRUCTS_H */
 
