@@ -766,7 +766,7 @@ static void struct_info_clear(StructInfo_t *si) {
  * @param si Pointer to StructInfo_t to free.
  */
 static void struct_info_free(StructInfo_t *si) {
-	for (size_t i = 0; i < si->count; ++i) {
+	for (size_t i = 0; i < si->capacity; ++i) {
 		member_clear(&si->members[i]);
 	}
 	si->count = 0;
@@ -866,7 +866,7 @@ static void struct_list_clear(StructList_t *sl) {
  * @param sl Pointer to StructList_t to free.
  */
 static void struct_list_free(StructList_t *sl) {
-	for (size_t i = 0; i < sl->count; ++i) {
+	for (size_t i = 0; i < sl->capacity; ++i) {
 		struct_info_free(&sl->items[i]);
 	}
 	free(sl->items);
@@ -1166,13 +1166,13 @@ static void generate_src(FILE  *generated_src, StructInfo_t  *si, Conf_t  *conf)
 static void print_usage(const char *prog) {
 	printf("Usage: %s [options] <header_file>\n"
 	       "Options:\n"
-	       "  -o, --outdir <dir>   Output directory. Default: current dir\n"
-	       "  -c, --combine        Generate one combined accessors.c/h file\n"
-	       "  -e, --excl <file>    Exclusion list. Which member of a struct to exclude (struct::member per line). Default: do not exclude anything\n"
-	       "  -i, --incl <file>    Inclusion list. Which struct to include (struct name per line). Default: include every struct found\n"
-	       "  -p, --prefix <str>   Prefix for generated function names\n"
-	       "  -v, --verbose        Verbose output\n"
-	       "  -h, --help           Show this message\n", prog);
+	       "  -o, --outdir <dir>  Output directory. Default: current dir\n"
+	       "  -c, --combine       Generate one combined accessors.c/h file\n"
+	       "  -e, --excl <file>   Exclusion list. Which member of a struct to exclude (struct::member per line). Default: do not exclude anything\n"
+	       "  -i, --incl <file>   Inclusion list. Which struct to include (struct name per line). Default: include every struct found\n"
+	       "  -p, --prefix <str>  Prefix for generated function names\n"
+	       "  -v, --verbose       Verbose output\n"
+	       "  -h, --help          Show this message\n", prog);
 }
 
 /**
@@ -1213,22 +1213,14 @@ static void args_init(Args_t *args, int argc, char *argv[]) {
 
 	while ((opt = getopt_long(argc, argv, "o:ce:i:p:vh", long_options, &option_index)) != -1) {
 		switch (opt) {
-		case 'o':
-			args->outdir    = optarg; break;
-		case 'c':
-			args->combine   = true;   break;
-		case 'e':
-			args->excl_file = optarg; break;
-		case 'i':
-			args->incl_file = optarg; break;
-		case 'p':
-			args->prefix    = optarg; break;
-		case 'v':
-			args->verbose   = true;   break;
-		case 'h':
-			print_usage(argv[0]); exit(EXIT_SUCCESS);
-		default:
-			print_usage(argv[0]); exit(EXIT_FAILURE);
+		case 'o': args->outdir    = optarg; break;
+		case 'c': args->combine   = true;   break;
+		case 'e': args->excl_file = optarg; break;
+		case 'i': args->incl_file = optarg; break;
+		case 'p': args->prefix    = optarg; break;
+		case 'v': args->verbose   = true;   break;
+		case 'h': print_usage(argv[0]); exit(EXIT_SUCCESS);
+		default:  print_usage(argv[0]); exit(EXIT_FAILURE);
 		}
 	}
 
@@ -1274,11 +1266,10 @@ static void args_free(Args_t *args) {
  * @param argc Argument count from main().
  * @param argv Argument vector from main().
  */
-static void conf_init(Conf_t *conf, int argc, char *argv[]) {
 #define STRUCT_RE   "struct[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\\{([^}]*)\\}[[:space:]]*;"
 #define CHAR_ARRAY_RE "^(const[[:space:]]+)?char[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\\[[[:space:]]*([A-Za-z0-9_]+)[[:space:]]*\\][[:space:]]*;"
 #define MEMBER_RE "^(const[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)([*[:space:]]+)([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*;"
-
+static void conf_init(Conf_t *conf, int argc, char *argv[]) {
 	args_init(&conf->args, argc, argv);
 
 	strlst_init(&conf->incl_list, 16);
