@@ -8,6 +8,20 @@
  *
  * This program parses C header files and generates accessor
  * functions (setter/getter) for each member found within.
+ *
+ * Limitations:
+ *   - Does not support typedef struct. For example,
+ *     typedef struct {
+ *         ...
+ *     } my_struct_t;
+ *
+ *   - Does not support struct within struct. For example,
+ *     struct my_struct {
+ *         struct another_struct {
+ *            ...
+ *         } my_var;
+ *         ...
+ *     };
  */
 
 #define _GNU_SOURCE
