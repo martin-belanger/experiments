@@ -99,6 +99,43 @@ static char *trim(char *s) {
 }
 
 /**
+ * @brief Strip inline C++-style comments ("// ...") from a line.
+ *
+ * If the substring "//" is found in @line, it is replaced by a NUL
+ * terminator so the remainder is ignored.
+ *
+ * @param line Line buffer to modify (in-place).
+ *
+ * @return Pointer to the (possibly truncated) line.
+ */
+static char *trim_inline_comments(char *line) {
+	char *p = strstr(line, "//");
+	if (p) *p = '\0';
+	return line;
+}
+
+/**
+ * @brief Remove C-style block comments (like this comment) from
+ *        a text buffer.
+ *
+ * Replaces all comment characters with space characters to
+ * preserve offsets while removing comment content.
+ *
+ * @param text The buffer to clean (modified in-place). If no
+ *             match is found the text pointed to by @text is
+ *             left alone.
+ */
+static void mask_c_comments(char *text) {
+	char *p = text;
+	while ((p = strstr(p, "/*")) != NULL) {
+		char *end = strstr(p + 2, "*/");
+		if (!end) break;
+		memset(p, ' ', end - p + 2);
+		p = end + 2;
+	}
+}
+
+/**
  * @brief Convert a string to uppercase in-place.
  *
  * Iterates each character of @s and transforms it to uppercase
@@ -299,43 +336,6 @@ static char *read_file(const char *path) {
 	return buf;
 }
 
-/**
- * @brief Strip inline C++-style comments ("// ...") from a line.
- *
- * If the substring "//" is found in @line, it is replaced by a NUL
- * terminator so the remainder is ignored.
- *
- * @param line Line buffer to modify (in-place).
- *
- * @return Pointer to the (possibly truncated) line.
- */
-static char *trim_inline_comments(char *line) {
-	char *p = strstr(line, "//");
-	if (p) *p = '\0';
-	return line;
-}
-
-/**
- * @brief Remove C-style block comments (like this comment) from
- *        a text buffer.
- *
- * Replaces all comment characters with space characters to
- * preserve offsets while removing comment content.
- *
- * @param text The buffer to clean (modified in-place). If no
- *             match is found the text pointed to by @text is
- *             left alone.
- */
-static void remove_c_comments(char *text) {
-	char *p = text;
-	while ((p = strstr(p, "/*")) != NULL) {
-		char *end = strstr(p + 2, "*/");
-		if (!end) break;
-		memset(p, ' ', end + 2 - p);
-		p = end + 2;
-	}
-}
-
 
 /******************************************************************************/
 
@@ -350,7 +350,7 @@ static void remove_c_comments(char *text) {
  *
  * @return Size in bytes of the match, or 0 if invalid.
  */
-static size_t match_size(const regmatch_t *m) {
+static size_t regmatch_size(const regmatch_t *m) {
 	bool invalid = m->rm_so < 0 || m->rm_eo < 0 || m->rm_eo < m->rm_so;
 	return invalid ? 0 : m->rm_eo - m->rm_so;
 }
@@ -367,8 +367,8 @@ static size_t match_size(const regmatch_t *m) {
  * @return Newly allocated string containing the match, or NULL if the
  *         match has zero length. Caller must free().
  */
-static char *match_strdup(const char *src, const regmatch_t *m) {
-	size_t len = match_size(m);
+static char *regmatch_strdup(const char *src, const regmatch_t *m) {
+	size_t len = regmatch_size(m);
 	return len ? safe_strndup(src + m->rm_so, len) : NULL;
 }
 
@@ -384,8 +384,8 @@ static char *match_strdup(const char *src, const regmatch_t *m) {
  *
  * @return true if @c present in match span, false otherwise.
  */
-static bool match_contains_char(const char *src, const regmatch_t *m, char c) {
-	size_t len = match_size(m);
+static bool regmatch_contains_char(const char *src, const regmatch_t *m, char c) {
+	size_t len = regmatch_size(m);
 	if (!len) return false;
 
 	const char *arr = src + m->rm_so;
@@ -409,9 +409,9 @@ static bool match_contains_char(const char *src, const regmatch_t *m, char c) {
  * @return true if the matched substring starts with @s, false
  *         otherwise.
  */
-static bool match_startswith(const char *src, const regmatch_t *m, const char *s) {
+static bool regmatch_startswith(const char *src, const regmatch_t *m, const char *s) {
 	size_t size;
-	size_t len = match_size(m);
+	size_t len = regmatch_size(m);
 
 	if (len == 0) return false;
 
@@ -667,27 +667,60 @@ typedef struct Conf {
 
 
 /******************************************************************************/
-
+/**
+ * The following structures are used to save the structs and members found
+ * while parsing the header files (*.h). Here's the relationship betweeen
+ * the different objects.
+ *
+ * +--------------------------+
+ * |        StructList_t      |
+ * |--------------------------|
+ * | StructInfo_t *items ---> [ array of StructInfo_t ]
+ * | size_t count             |
+ * | size_t capacity          |
+ * +--------------------------+
+ *               |
+ *               v
+ *     +--------------------------+
+ *     |       StructInfo_t       |
+ *     |--------------------------|
+ *     | char *name               |
+ *     | Member_t *members ---> [ array of Member_t ]
+ *     | size_t count             |
+ *     | size_t capacity          |
+ *     +--------------------------+
+ *                     |
+ *                     v
+ *          +--------------------------+
+ *          |         Member_t         |
+ *          |--------------------------|
+ *          | char *type               |
+ *          | char *name               |
+ *          | char *array_size         |
+ *          | bool is_char_array       |
+ *          | bool is_const            |
+ *          +--------------------------+
+*/
 
 typedef struct Member {
-	char          *type;
-	char          *name;
-	char          *array_size;
-	bool          is_char_array;
-	bool          is_const;
+	char          *type;         /* Type of the struct member */
+	char          *name;         /* Name of the struct member */
+	char          *array_size;   /* If member is an array what is the [size] */
+	bool          is_char_array; /* Whether the member is an array */
+	bool          is_const;      /* Whether the member is defined as const */
 } Member_t;
 
 typedef struct StructInfo {
-	char          *name;
-	Member_t      *members;
-	size_t        count;          /* Number of members in this struct */
-	size_t        capacity;       /* Allocated capacity for members */
+	char          *name;         /* Name of the struct */
+	Member_t      *members;      /* Array of struct members (each entry corresponds to one member) */
+	size_t        count;         /* Number of entries in members */
+	size_t        capacity;      /* Allocated capacity for members */
 } StructInfo_t;
 
 typedef struct StructList {
-	StructInfo_t  *items;
-	size_t        count;          /* Number of structs */
-	size_t        capacity;       /* Allocated capacity for items */
+	StructInfo_t  *items;        /* Array of structs (each entry corresponds to one struct) */
+	size_t        count;         /* Number of entries in items */
+	size_t        capacity;      /* Allocated capacity for items */
 } StructList_t;
 
 /**
@@ -931,21 +964,21 @@ static StructInfo_t *struct_list_struct_add(StructList_t *sl, char *struct_name,
  * @param conf Pointer to configuration containing regexes and lists.
  */
 static void struct_list_parse(StructList_t *sl, const char *text, Conf_t *conf) {
-	regmatch_t struct_match[4];
+	regmatch_t regmatch_struct[4];
 	const char *cursor;
 	int rc;
 
 	struct_list_clear(sl);
 
-	for (cursor = text, rc = regexec(&conf->re.re_struct, cursor, 4, struct_match, 0);
+	for (cursor = text, rc = regexec(&conf->re.re_struct, cursor, 4, regmatch_struct, 0);
 	     rc == 0;
-	     cursor += struct_match[0].rm_eo, rc = regexec(&conf->re.re_struct, cursor, 4, struct_match, 0)) {
+	     cursor += regmatch_struct[0].rm_eo, rc = regexec(&conf->re.re_struct, cursor, 4, regmatch_struct, 0)) {
 		struct StructInfo  *si;
 		char  *struct_name;
 		char  *body;
 		char  *line;
 
-		struct_name = match_strdup(cursor, &struct_match[1]);
+		struct_name = regmatch_strdup(cursor, &regmatch_struct[1]);
 
 		if (is_excluded(&conf->excl_list, struct_name, NULL) ||
 		    !is_included(&conf->incl_list, struct_name)) {
@@ -955,12 +988,12 @@ static void struct_list_parse(StructList_t *sl, const char *text, Conf_t *conf) 
 
 		si = struct_list_struct_add(sl, struct_name, true);
 
-		body = match_strdup(cursor, &struct_match[2]);
-		remove_c_comments(body);
+		body = regmatch_strdup(cursor, &regmatch_struct[2]);
+		mask_c_comments(body);
 
 		/* Split struct body into lines */
 		for (line = strtok(body, "\n"); line != NULL; line = strtok(NULL, "\n")) {
-			regmatch_t  member_match[5];
+			regmatch_t  regmatch_member[5];
 			char  *trimmed_line;
 
 			trimmed_line = trim(trim_inline_comments(line));
@@ -971,11 +1004,11 @@ static void struct_list_parse(StructList_t *sl, const char *text, Conf_t *conf) 
 			if (strstr(trimmed_line, "struct")) continue; /* skip struct members */
 
 			/* Look for char arrays. E.g. char buffer[10] */
-			if (regexec(&conf->re.re_char_array, trimmed_line, 5, member_match, 0) == 0) {
+			if (regexec(&conf->re.re_char_array, trimmed_line, 5, regmatch_member, 0) == 0) {
 				char *name;
 				Member_t *m;
 
-				name = match_strdup(trimmed_line, &member_match[2]);
+				name = regmatch_strdup(trimmed_line, &regmatch_member[2]);
 				if (is_excluded(&conf->excl_list, struct_name, name)) {
 					free(name);
 					continue;
@@ -983,28 +1016,28 @@ static void struct_list_parse(StructList_t *sl, const char *text, Conf_t *conf) 
 				m = struct_info_member_add(si, "const char *", name, false, true);
 
 				m->is_char_array = true;
-				m->is_const = match_startswith(trimmed_line, &member_match[1], "const");
-				m->array_size = match_strdup(trimmed_line, &member_match[3]);
+				m->is_const = regmatch_startswith(trimmed_line, &regmatch_member[1], "const");
+				m->array_size = regmatch_strdup(trimmed_line, &regmatch_member[3]);
 
 				continue;
 			}
 
 			/* All other members */
-			if (regexec(&conf->re.re_member, trimmed_line, 5, member_match, 0) == 0) {
+			if (regexec(&conf->re.re_member, trimmed_line, 5, regmatch_member, 0) == 0) {
 				Member_t *m;
 				bool is_ptr;
 				char *type;
 				char *name;
 
-				name = match_strdup(trimmed_line, &member_match[4]);
+				name = regmatch_strdup(trimmed_line, &regmatch_member[4]);
 				if (is_excluded(&conf->excl_list, struct_name, name)) {
 					free(name);
 					continue;
 				}
 
-				is_ptr = match_contains_char(trimmed_line, &member_match[3], '*');
+				is_ptr = regmatch_contains_char(trimmed_line, &regmatch_member[3], '*');
 				if (is_ptr) {
-					bool is_char = match_startswith(trimmed_line, &member_match[2], "char");
+					bool is_char = regmatch_startswith(trimmed_line, &regmatch_member[2], "char");
 
 					/* If we have a pointer, but it's not a "char *" then skip. */
 					if (!is_char) {
@@ -1014,11 +1047,11 @@ static void struct_list_parse(StructList_t *sl, const char *text, Conf_t *conf) 
 
 					type = safe_strdup("const char *"); /* used as the getter return type */
 				} else {
-					type = match_strdup(trimmed_line, &member_match[2]);
+					type = regmatch_strdup(trimmed_line, &regmatch_member[2]);
 				}
 
 				m = struct_info_member_add(si, type, name, true, true);
-				m->is_const = match_startswith(trimmed_line, &member_match[1], "const");;
+				m->is_const = regmatch_startswith(trimmed_line, &regmatch_member[1], "const");;
 			}
 		}
 		free(body);
