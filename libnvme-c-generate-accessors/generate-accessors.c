@@ -27,6 +27,7 @@
  *   ./generate-accessors private.h
  */
 
+#include "config.h" // Include the generated config.h
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,10 @@
 #include <libgen.h>
 #include <stdio.h>
 #include <ctype.h>
+
+#ifdef HAVE_SENDFILE
+#include <sys/sendfile.h>
+#endif
 
 #define OUTPUT_FNAME_DEFAULT_C "accessors.c"
 #define OUTPUT_FNAME_DEFAULT_H "accessors.h"
@@ -209,21 +214,22 @@ static char *to_uppercase(char *s)
  * // Result: "_23bad_name_"
  * @endcode
  */
-static const char *sanitize_identifier(char *s) {
-    if (s == NULL || *s == '\0')
-        return s;
+static const char *sanitize_identifier(char *s)
+{
+	if (s == NULL || *s == '\0')
+		return s;
 
-    // The first character must be a letter or underscore
-    if (!isalpha((unsigned char)s[0]) && s[0] != '_')
-        s[0] = '_';
+	// The first character must be a letter or underscore
+	if (!isalpha((unsigned char)s[0]) && s[0] != '_')
+		s[0] = '_';
 
-    // Remaining characters: letters, digits, underscores allowed
-    for (char *p = s + 1; *p; ++p) {
-        if (!isalnum((unsigned char)*p) && *p != '_')
-            *p = '_';
-    }
+	// Remaining characters: letters, digits, underscores allowed
+	for (char *p = s + 1; *p; ++p) {
+		if (!isalnum((unsigned char)*p) && *p != '_')
+			*p = '_';
+	}
 
-    return s;
+	return s;
 }
 
 /**
@@ -1532,6 +1538,62 @@ static void conf_free(Conf_t *conf)
 	args_free(&conf->args);
 }
 
+/**
+ * @brief Appends the contents of one file to another.
+ *
+ * This function copies all data from the source file stream (`srce`)
+ * to the destination file stream (`dest`).
+ *
+ * If `HAVE_SENDFILE` is defined, the function uses the `sendfile()` system call
+ * for efficient data transfer between file descriptors. Otherwise, it falls
+ * back to a standard character-by-character copy using `fgetc()` and `fputc()`.
+ *
+ * The source file position is reset to the beginning before copying.
+ * The destination file is not closed or flushed beyond the initial `fflush()`
+ * performed internally.
+ *
+ * @param dest:  Destination file stream to which data will be appended.
+ * @param srce:  Source file stream whose contents will be copied.
+ *
+ * @note Both file streams must be opened before calling this function.
+ *       The function assumes that `dest` is writable and `srce` is readable.
+ *       On systems that support `sendfile()`, both files must also have valid
+ *       file descriptors.
+ *
+ * @warning This function does not perform any error checking.
+ *          If you require robust handling of I/O errors, you should modify
+ *          the implementation accordingly.
+ */
+static void append_file(FILE *dest, FILE *srce)
+{
+#ifdef HAVE_SENDFILE
+	/* Quick file copy using Linux's sendfile system-call */
+	off_t  offset;
+	long   bytes_to_copy;
+
+	/* Make sure any buffered data is written to the files before
+	 * copying. This is to avoid having missing data from @srce or
+	 * data being written out of sequence in @dest.
+	 */
+	fflush(dest);
+	fflush(srce);
+
+	/* Evaluate the size of the @srce file */
+	fseek(srce, 0, SEEK_END);
+	bytes_to_copy = ftell(srce);
+	rewind(srce);
+
+	offset = 0;
+	sendfile(fileno(dest), fileno(srce), &offset, bytes_to_copy);
+#else
+	/* Copy character-by-character */
+	int  c;
+
+	rewind(srce);
+	while ((c = fgetc(srce)) != EOF)
+		fputc(c, dest);
+#endif
+}
 
 /******************************************************************************/
 
@@ -1563,7 +1625,6 @@ int main(int argc, char *argv[])
 	FILE          *tmp_src_code = NULL;
 	Conf_t        conf;
 	int           dont_care;
-	int           c;
 
 	(void)dont_care;
 
@@ -1629,7 +1690,7 @@ int main(int argc, char *argv[])
 
 	struct_list_free(&sl);
 
-	/* We're done gathering all the data. Now let's output the generated files. */
+	/* We've collected all the data we needed. Now let's generate some files. */
 
 	/***********************************************************************
 	 * First, output the generated header file.
@@ -1637,7 +1698,7 @@ int main(int argc, char *argv[])
 
 	/* Add a guard in the generated header file that is made of
 	 * the UPPERCASE file name's stem. In other words, if the file
-	 * name is "accessors.h" then the guard should be "__ACCESSORS_H__"
+	 * name is "accessors.h" then the guard should be "_ACCESSORS_H_"
 	 */
 	dont_care = asprintf(&guard, "_%s_", get_filename(conf.args.h_fname));
 	sanitize_identifier(to_uppercase(guard));
@@ -1663,11 +1724,8 @@ int main(int argc, char *argv[])
 	strlst_free(&forward_declares);
 
 	/* Copy temporary file to output */
-	rewind(tmp_hdr_code);
-	while ((c = fgetc(tmp_hdr_code)) != EOF)
-		fputc(c, generated_hdr);
+	append_file(generated_hdr, tmp_hdr_code);
 	fclose(tmp_hdr_code);
-
 	fprintf(generated_hdr, "#endif /* %s */\n", guard);
 	fclose(generated_hdr);
 	free(guard);
@@ -1687,15 +1745,12 @@ int main(int argc, char *argv[])
 		"\n", banner, conf.args.h_fname);
 
 	STRLST_FOREACH(&files_to_include, include_fname)
-		fprintf(generated_src, "#include \"%s\";\n", include_fname);
+		fprintf(generated_src, "#include \"%s\"\n", include_fname);
 	strlst_free(&files_to_include);
 
 	/* Copy temporary file to output */
-	rewind(tmp_src_code);
-	while ((c = fgetc(tmp_src_code)) != EOF)
-		fputc(c, generated_src);
+	append_file(generated_src, tmp_src_code);
 	fclose(tmp_src_code);
-
 	fclose(generated_src);
 
 	if (conf.args.verbose)
