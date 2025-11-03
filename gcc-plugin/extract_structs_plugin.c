@@ -1,4 +1,24 @@
-// g++ -I`gcc -print-file-name=plugin`/include -fPIC -shared -fno-rtti -O2 extract_structs_plugin.c -o extract_structs_plugin.so
+/**
+ * Copyright (c) 2025, Martin Belanger.
+ *
+ * Experimental Software Notice
+ *
+ * This software is provided on an "AS IS" basis, without warranties or conditions
+ * of any kind, either express or implied, including, without limitation, any
+ * warranties or conditions of title, non-infringement, merchantability, or
+ * fitness for a particular purpose.
+ *
+ * This code is experimental and may contain defects, bugs, or incomplete features.
+ * The author(s) assume no responsibility or liability for any damages or losses
+ * arising from the use of this software.
+ *
+ * Use at your own risk.
+ *
+ *******************************************************************************
+ *
+ * g++ -I`gcc -print-file-name=plugin`/include -fPIC -shared -fno-rtti -O2 extract_structs_plugin.c -o extract_structs_plugin.so
+ */
+
 #include "gcc-plugin.h"
 #include "plugin-version.h"
 #include "tree.h"

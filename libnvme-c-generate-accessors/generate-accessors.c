@@ -1,10 +1,20 @@
-// SPDX-License-Identifier: LGPL-2.1-or-later
 /**
- * This file is part of libnvme.
+ * Copyright (c) 2025, Martin Belanger.
  *
- * Copyright (c) 2025, Dell Technologies Inc. or its subsidiaries.
+ * Experimental Software Notice
  *
- * Authors: Martin Belanger <Martin.Belanger@dell.com>
+ * This software is provided on an "AS IS" basis, without warranties or conditions
+ * of any kind, either express or implied, including, without limitation, any
+ * warranties or conditions of title, non-infringement, merchantability, or
+ * fitness for a particular purpose.
+ *
+ * This code is experimental and may contain defects, bugs, or incomplete features.
+ * The author(s) assume no responsibility or liability for any damages or losses
+ * arising from the use of this software.
+ *
+ * Use at your own risk.
+ *
+ *******************************************************************************
  *
  * This program parses C header files and generates accessor
  * functions (setter/getter) for each member found within.
