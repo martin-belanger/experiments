@@ -16,9 +16,21 @@ cc = meson.get_compiler('c')
 conf_data = configuration_data()
 conf_data.set('HAVE_SENDFILE', cc.has_function('sendfile'))
 
-configure_file(output: 'config.h', configuration: conf_data)
+config_h = configure_file(output: 'config.h', configuration: conf_data)
 
-generate_accessors = executable('generate-accessors', 'generate-accessors.c')
+if meson.version().version_compare('>=1.4.0')
+  config_h_path = config_h.full_path()
+else
+  config_h_path = meson.current_build_dir() / 'config.h'
+endif
+
+generate_accessors = executable(
+    'generate-accessors',
+    'generate-accessors.c',
+    c_args: [
+        '-include', config_h_path,
+    ],
+)
 
 subdir('tests')
 

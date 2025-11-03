@@ -27,7 +27,6 @@
  *   ./generate-accessors private.h
  */
 
-#include "config.h" // Include the generated config.h
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,8 +50,12 @@
 #define OUTPUT_FNAME_DEFAULT_C "accessors.c"
 #define OUTPUT_FNAME_DEFAULT_H "accessors.h"
 
-#define SPACES  " \t\n\r"
-#define streq(a, b) (strcmp((a), (b)) == 0)
+#define STRUCT_RE     "struct[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\\{([^}]*)\\}[[:space:]]*;"
+#define CHAR_ARRAY_RE "^(const[[:space:]]+)?char[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\\[[[:space:]]*([A-Za-z0-9_]+)[[:space:]]*\\][[:space:]]*;"
+#define MEMBER_RE     "^(const[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)([*[:space:]]+)([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*;"
+
+#define SPACES        " \t\n\r"
+#define streq(a, b)   (strcmp((a), (b)) == 0)
 
 static const char *banner =
 	"// SPDX-License-Identifier: LGPL-2.1-or-later\n"
@@ -800,27 +803,19 @@ static bool is_included(const StringList_t *incl_list, const char *struct_name)
 /******************************************************************************/
 
 
-typedef struct Args {
-	bool          verbose;
-	const char    *c_fname;		/* Generated output *.c file name */
-	const char    *h_fname;		/* Generated output *.h file name */
-	const char    *prefix;		/* Prefix added to each functions */
-	const char    *excl_file;	/* Exclusion list */
-	const char    *incl_file;	/* Inclusion list */
-	StringList_t  hdr_files;	/* Input header file list */
-} Args_t;
-
-typedef struct {
-	regex_t       re_struct;
-	regex_t       re_char_array;
-	regex_t       re_member;
-} regex_db_t;
-
 typedef struct Conf {
-	Args_t        args;
-	StringList_t  incl_list;
-	StringList_t  excl_list;
-	regex_db_t    re;
+	bool             verbose;
+	const char       *c_fname;	/* Generated output *.c file name */
+	const char       *h_fname;	/* Generated output *.h file name */
+	const char       *prefix;	/* Prefix added to each functions */
+	StringList_t     hdr_files;	/* Input header file list */
+	StringList_t     incl_list;	/* Inclusion list (read from --incl) */
+	StringList_t     excl_list;	/* Enclusion list (read from --excl) */
+	struct {
+		regex_t  re_struct;	/* regex to match struct definitions */
+		regex_t  re_char_array;	/* regex to match char array struct members */
+		regex_t  re_member;	/* regex to match all other struct members */
+	} re;				/* Precompiled regular expressions */
 } Conf_t;
 
 
@@ -1231,7 +1226,7 @@ static void struct_list_parse(StructList_t *sl, const char *text, Conf_t *conf)
 		}
 		free(body);
 
-		if (conf->args.verbose && !STRUCT_INFO_EMPTY(si))
+		if (conf->verbose && !STRUCT_INFO_EMPTY(si))
 			printf("Found struct: %s (%lu members)\n", si->name, si->count);
 	}
 }
@@ -1273,18 +1268,18 @@ static void generate_hdr(FILE  *generated_hdr, StructInfo_t  *si, Conf_t *conf)
 			if (members->is_char_array || streq(members->type, "const char *"))
 				fprintf(generated_hdr,
 					"void %s%s_%s_set(struct %s *p, const char *%s);\n",
-					conf->args.prefix, si->name,
+					conf->prefix, si->name,
 					members->name, si->name, members->name);
 			else
 				fprintf(generated_hdr,
 					"void %s%s_%s_set(struct %s *p, %s %s);\n",
-					conf->args.prefix, si->name,
+					conf->prefix, si->name,
 					members->name, si->name, members->type, members->name);
 		}
 
 		/* Getter method */
 		fprintf(generated_hdr, "%s %s%s_%s_get(struct %s *p);\n\n",
-			members->type, conf->args.prefix, si->name, members->name, si->name);
+			members->type, conf->prefix, si->name, members->name, si->name);
 	}
 }
 
@@ -1300,7 +1295,7 @@ static void generate_hdr(FILE  *generated_hdr, StructInfo_t  *si, Conf_t *conf)
  *
  * @param generated_src: FILE* to write implementations to.
  * @param si: Pointer to the struct description.
- * @param conf: Pointer to Conf_t controlling generation options.
+ * @param conf: Pointer to Conf_t containing args and generation options.
  */
 static void generate_src(FILE  *generated_src, StructInfo_t  *si, Conf_t  *conf)
 {
@@ -1316,7 +1311,7 @@ static void generate_src(FILE  *generated_src, StructInfo_t  *si, Conf_t  *conf)
 					"    free(p->%s);\n"
 					"    p->%s = %s ? strdup(%s) : NULL;\n"
 					"}\n\n",
-					conf->args.prefix, si->name, member->name,
+					conf->prefix, si->name, member->name,
 					si->name, member->name,
 					member->name,
 					member->name, member->name, member->name);
@@ -1330,7 +1325,7 @@ static void generate_src(FILE  *generated_src, StructInfo_t  *si, Conf_t  *conf)
 						"    strncpy(p->%s, %s, %lu);\n"
 						"    p->%s[%lu] = '\\0';\n"
 						"}\n\n",
-						conf->args.prefix, si->name, member->name,
+						conf->prefix, si->name, member->name,
 						si->name, member->name,
 						member->name, member->name, sz,
 						member->name, sz - 1);
@@ -1340,7 +1335,7 @@ static void generate_src(FILE  *generated_src, StructInfo_t  *si, Conf_t  *conf)
 						"    strncpy(p->%s, %s, %s);\n"
 						"    p->%s[%s - 1] = '\\0';\n"
 						"}\n\n",
-						conf->args.prefix, si->name, member->name,
+						conf->prefix, si->name, member->name,
 						si->name, member->name,
 						member->name, member->name, member->array_size,
 						member->name, member->array_size);
@@ -1350,7 +1345,7 @@ static void generate_src(FILE  *generated_src, StructInfo_t  *si, Conf_t  *conf)
 					"void %s%s_%s_set(struct %s *p, %s %s) {\n"
 					"    p->%s = %s;\n"
 					"}\n\n",
-					conf->args.prefix, si->name, member->name, si->name,
+					conf->prefix, si->name, member->name, si->name,
 					member->type, member->name,
 					member->name, member->name);
 
@@ -1361,7 +1356,7 @@ static void generate_src(FILE  *generated_src, StructInfo_t  *si, Conf_t  *conf)
 		fprintf(generated_src, "%s %s%s_%s_get(struct %s *p) {\n"
 			"    return p->%s;\n"
 			"}\n\n",
-			member->type, conf->args.prefix, si->name, member->name, si->name,
+			member->type, conf->prefix, si->name, member->name, si->name,
 			member->name);
 	}
 }
@@ -1390,69 +1385,52 @@ static void print_usage(const char *prog)
 }
 
 /**
- * @brief Parse command line arguments and populate an Args_t.
+ * @brief Parse command line arguments and populate a Conf_t.
  *
  * Uses getopt_long to process supported options and expands file
  * wildcards using glob(). Populates args->hdr_files with matched
- * header filenames.
+ * header filenames. Initializes inclusion and exclusion lists
+ * from --incl and --excl options.
  *
- * @param args: Pointer to Args_t to populate (must be writable).
+ * @param args: Pointer to Conf_t to initialize.
  * @param argc: Argument count from main().
  * @param argv: Argument vector from main().
  *
  * @note This function exits the process on fatal errors (missing files).
  */
-static void args_init(Args_t *args, int argc, char *argv[])
+static void args_parse(Conf_t *conf, int argc, char *argv[])
 {
-	int  opt;
-	int  option_index = 0;
-
-	args->verbose = false;
-	args->c_fname = OUTPUT_FNAME_DEFAULT_C;
-	args->h_fname = OUTPUT_FNAME_DEFAULT_H;
-	args->prefix = "";
-	args->excl_file = NULL;
-	args->incl_file = NULL;
-	strlst_init(&args->hdr_files, 16);
-
-	static struct option long_options[] = {
-		{ "c-out",   required_argument, 0, 'c' },
-		{ "h-out",   required_argument, 0, 'h' },
-		{ "excl",    required_argument, 0, 'e' },
-		{ "incl",    required_argument, 0, 'i' },
-		{ "prefix",  required_argument, 0, 'p' },
-		{ "verbose", no_argument,       0, 'v' },
-		{ "help",    no_argument,       0, 'H' },
-		{ 0, 0, 0, 0 }
+	const char  *opt_excl_file = NULL;
+	const char  *opt_incl_file = NULL;
+	static const char  *optstr = "o:c:h:e:i:p:vH";
+	static struct option  longopts[] = {
+		{ "c-out",   required_argument, NULL, 'c' },
+		{ "h-out",   required_argument, NULL, 'h' },
+		{ "excl",    required_argument, NULL, 'e' },
+		{ "incl",    required_argument, NULL, 'i' },
+		{ "prefix",  required_argument, NULL, 'p' },
+		{ "verbose", no_argument,       NULL, 'v' },
+		{ "help",    no_argument,       NULL, 'H' },
+		{ NULL, 0, NULL, 0 }
 	};
 
-	while ((opt =
-		  getopt_long(argc, argv, "o:c:h:e:i:p:vH", long_options, &option_index)) != -1) {
+	conf->verbose = false;
+	conf->c_fname = OUTPUT_FNAME_DEFAULT_C;
+	conf->h_fname = OUTPUT_FNAME_DEFAULT_H;
+	conf->prefix = "";
+
+	for (int opt = getopt_long(argc, argv, optstr, longopts, NULL);
+	     opt != -1;
+	     opt = getopt_long(argc, argv, optstr, longopts, NULL)) {
 		switch (opt) {
-		case 'c':
-			args->c_fname = optarg;
-			break;
-		case 'h':
-			args->h_fname = optarg;
-			break;
-		case 'e':
-			args->excl_file = optarg;
-			break;
-		case 'i':
-			args->incl_file = optarg;
-			break;
-		case 'p':
-			args->prefix = optarg;
-			break;
-		case 'v':
-			args->verbose = true;
-			break;
-		case 'H':
-			print_usage(argv[0]);
-			exit(EXIT_SUCCESS);
-		default:
-			print_usage(argv[0]);
-			exit(EXIT_FAILURE);
+		case 'c': conf->c_fname = optarg; break;
+		case 'h': conf->h_fname = optarg; break;
+		case 'e': opt_excl_file = optarg; break;
+		case 'i': opt_incl_file = optarg; break;
+		case 'p': conf->prefix  = optarg; break;
+		case 'v': conf->verbose = true;   break;
+		case 'H': print_usage(argv[0]);   exit(EXIT_SUCCESS);
+		default:  print_usage(argv[0]);   exit(EXIT_FAILURE);
 		}
 	}
 
@@ -1462,56 +1440,41 @@ static void args_init(Args_t *args, int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	strlst_init(&conf->hdr_files, 16);
 	for (int i = optind; i < argc; ++i) {
 		glob_t  glob_result = { 0 };
 		int  ret = glob(argv[i], GLOB_TILDE|GLOB_NOCHECK, NULL, &glob_result);
 
 		if (ret == 0) {
 			for (size_t j = 0; j < glob_result.gl_pathc; ++j)
-				strlst_add(&args->hdr_files,
+				strlst_add(&conf->hdr_files,
 					   realpath(glob_result.gl_pathv[j], NULL), true);
 		} else {
 			fprintf(stderr, "Warning: No match for %s\n", argv[i]);
 		}
 		globfree(&glob_result);
 	}
-}
 
-/**
- * @brief Free resources held by Args_t.
- *
- * Frees the hdr_files list contents and resets fields as necessary.
- *
- * @param args: Pointer to Args_t to free.
- */
-static void args_free(Args_t *args)
-{
-	strlst_free(&args->hdr_files);
+	strlst_init(&conf->incl_list, 16);
+	strlst_load(&conf->incl_list, opt_incl_file);
+
+	strlst_init(&conf->excl_list, 16);
+	strlst_load(&conf->excl_list, opt_excl_file);
 }
 
 /**
  * @brief Initialize Conf_t including regex compilation and loading lists.
  *
- * Parses command-line args via args_init, initializes inclusion and
- * exclusion lists and compiles the regular expressions used to parse
- * structs and members.
+ * Parses command-line args via args_parse and compiles the regular
+ * expressions used to parse structs and members.
  *
  * @param conf: Pointer to Conf_t to initialize.
  * @param argc: Argument count from main().
  * @param argv: Argument vector from main().
  */
-#define STRUCT_RE   "struct[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\\{([^}]*)\\}[[:space:]]*;"
-#define CHAR_ARRAY_RE "^(const[[:space:]]+)?char[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\\[[[:space:]]*([A-Za-z0-9_]+)[[:space:]]*\\][[:space:]]*;"
-#define MEMBER_RE "^(const[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)([*[:space:]]+)([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*;"
 static void conf_init(Conf_t *conf, int argc, char *argv[])
 {
-	args_init(&conf->args, argc, argv);
-
-	strlst_init(&conf->incl_list, 16);
-	strlst_load(&conf->incl_list, conf->args.incl_file);
-
-	strlst_init(&conf->excl_list, 16);
-	strlst_load(&conf->excl_list, conf->args.excl_file);
+	args_parse(conf, argc, argv);
 
 	regcomp(&conf->re.re_struct, STRUCT_RE, REG_EXTENDED);
 	regcomp(&conf->re.re_member, MEMBER_RE, REG_EXTENDED);
@@ -1528,14 +1491,13 @@ static void conf_init(Conf_t *conf, int argc, char *argv[])
  */
 static void conf_free(Conf_t *conf)
 {
+	strlst_free(&conf->hdr_files);
 	strlst_free(&conf->incl_list);
 	strlst_free(&conf->excl_list);
 
 	regfree(&conf->re.re_char_array);
 	regfree(&conf->re.re_member);
 	regfree(&conf->re.re_struct);
-
-	args_free(&conf->args);
 }
 
 /**
@@ -1638,11 +1600,11 @@ int main(int argc, char *argv[])
 	tmp_hdr_code = tmpfile();
 	tmp_src_code = tmpfile();
 
-	STRLST_FOREACH(&conf.args.hdr_files, in_hdr) {
+	STRLST_FOREACH(&conf.hdr_files, in_hdr) {
 		StructInfo_t *si;
 		const char   *in_hdr_fname = get_filename(in_hdr);
 
-		if (conf.args.verbose)
+		if (conf.verbose)
 			printf("\nProcessing %s\n", in_hdr);
 
 		char *text = read_file(in_hdr);
@@ -1651,7 +1613,7 @@ int main(int argc, char *argv[])
 		free(text);
 
 		if (STRUCT_LIST_EMPTY(&sl)) {
-			if (conf.args.verbose) {
+			if (conf.verbose) {
 				if (STRLST_EMPTY(&conf.incl_list))
 					printf("No structs found in %s.\n",
 					       in_hdr);
@@ -1700,12 +1662,12 @@ int main(int argc, char *argv[])
 	 * the UPPERCASE file name's stem. In other words, if the file
 	 * name is "accessors.h" then the guard should be "_ACCESSORS_H_"
 	 */
-	dont_care = asprintf(&guard, "_%s_", get_filename(conf.args.h_fname));
+	dont_care = asprintf(&guard, "_%s_", get_filename(conf.h_fname));
 	sanitize_identifier(to_uppercase(guard));
 
-	mkdir_fullpath(conf.args.h_fname, 0755); /* create output file's directory if needed */
+	mkdir_fullpath(conf.h_fname, 0755); /* create output file's directory if needed */
 
-	generated_hdr = fopen(conf.args.h_fname, "w");
+	generated_hdr = fopen(conf.h_fname, "w");
 	fprintf(generated_hdr,
 		"%s\n"
 		"#ifndef %s\n"
@@ -1735,14 +1697,14 @@ int main(int argc, char *argv[])
 	 * Second, output the generated source file.
 	 */
 
-	mkdir_fullpath(conf.args.c_fname, 0755); /* create output file's directory if needed */
-	generated_src = fopen(conf.args.c_fname, "w");
+	mkdir_fullpath(conf.c_fname, 0755); /* create output file's directory if needed */
+	generated_src = fopen(conf.c_fname, "w");
 	fprintf(generated_src,
 		"%s\n"
 		"#include <stdlib.h>\n"
 		"#include <string.h>\n"
 		"#include \"%s\"\n"
-		"\n", banner, conf.args.h_fname);
+		"\n", banner, get_filename(conf.h_fname));
 
 	STRLST_FOREACH(&files_to_include, include_fname)
 		fprintf(generated_src, "#include \"%s\"\n", include_fname);
@@ -1753,8 +1715,8 @@ int main(int argc, char *argv[])
 	fclose(tmp_src_code);
 	fclose(generated_src);
 
-	if (conf.args.verbose)
-		printf("\nGenerated %s and %s\n", conf.args.h_fname, conf.args.c_fname);
+	if (conf.verbose)
+		printf("\nGenerated %s and %s\n", conf.h_fname, conf.c_fname);
 
 	conf_free(&conf);
 
