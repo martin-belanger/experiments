@@ -4,6 +4,7 @@
 #define EXAMPLE_STRUCTS_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define NICKSIZE 32
 
